@@ -2086,6 +2086,7 @@ public class RemoteExecutionServiceTest {
         cache,
         executor,
         tempPathGenerator,
-        null);
+        /*captureCorruptedOutputsDir=*/ null,
+        /*actionResultDownloader=*/ null);
   }
 }

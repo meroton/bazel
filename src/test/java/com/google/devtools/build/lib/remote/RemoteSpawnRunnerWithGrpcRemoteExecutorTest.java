@@ -327,7 +327,8 @@ public class RemoteSpawnRunnerWithGrpcRemoteExecutorTest {
             remoteCache,
             executor,
             tempPathGenerator,
-            /* captureCorruptedOutputsDir= */ null);
+            /* captureCorruptedOutputsDir= */ null,
+            /* actionResultDownloader= */ null);
     client =
         new RemoteSpawnRunner(
             execRoot,
