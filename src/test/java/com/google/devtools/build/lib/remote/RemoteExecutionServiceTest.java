@@ -2307,7 +2307,8 @@ public class RemoteExecutionServiceTest {
         executor,
         tempPathGenerator,
         null,
-        remoteOutputChecker);
+        remoteOutputChecker,
+        /*actionResultDownloader=*/ null);
   }
 
   private void createOutputDirectories(Spawn spawn) throws IOException {

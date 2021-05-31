@@ -14,6 +14,8 @@
 
 package com.google.devtools.build.lib.remote;
 
+import static com.google.common.hash.Hashing.md5;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 import build.bazel.remote.execution.v2.DigestFunction;
@@ -96,6 +98,7 @@ import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.OutputPermissions;
 import com.google.devtools.build.lib.vfs.OutputService;
 import com.google.devtools.build.lib.vfs.Path;
+import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParsingResult;
 import io.grpc.CallCredentials;
@@ -130,7 +133,9 @@ public final class RemoteModule extends BlazeModule {
   @Nullable private RemoteActionInputFetcher actionInputFetcher;
   @Nullable private RemoteOptions remoteOptions;
   @Nullable private CommandEnvironment env;
-  @Nullable private RemoteOutputService remoteOutputService;
+  @Nullable private OutputService remoteOutputService;
+  @Nullable private GrpcRemoteOutputService.StateAcrossBuilds remoteOutputServiceStateAcrossBuilds =
+      new GrpcRemoteOutputService.StateAcrossBuilds();
   @Nullable private TempPathGenerator tempPathGenerator;
   @Nullable private BlockWaitingModule blockWaitingModule;
   @Nullable private RemoteOutputChecker remoteOutputChecker;
@@ -240,7 +245,8 @@ public final class RemoteModule extends BlazeModule {
             remoteCache,
             /* retryScheduler= */ null,
             digestUtil,
-            remoteOutputChecker);
+            remoteOutputChecker,
+            /* actionResultDownloader= */ null);
   }
 
   @Override
@@ -506,6 +512,55 @@ public final class RemoteModule extends BlazeModule {
             cacheChannel.retain(), callCredentialsProvider, remoteOptions, retrier, digestUtil);
     cacheChannel.release();
 
+    ActionResultDownloader actionResultDownloader = null;
+    Preconditions.checkState(remoteOutputService == null, "remoteOutputService must be null");
+    if (remoteOptions.remoteOutputService != null) {
+      if (remoteOptions.remoteOutputsMode != RemoteOutputsMode.ALL) {
+        throw createOptionsExitException(
+            "If --remote_output_service is specified, --remote_download_outputs must be set to \"all\"",
+            FailureDetails.RemoteOptions.Code.OUTPUT_SERVICE_WITH_INCOMPATIBLE_REMOTE_OUTPUTS_MODE);
+      }
+      String outputBaseId = remoteOptions.remoteOutputServiceOutputBaseId;
+      if (Strings.isNullOrEmpty(outputBaseId)) {
+        outputBaseId = DigestUtil.hashCodeToString(md5().hashString(env.getWorkspace().toString(), UTF_8));
+      }
+      String outputPathPrefix = remoteOptions.remoteOutputServiceOutputPathPrefix;
+      if (Strings.isNullOrEmpty(outputPathPrefix)) {
+        throw createOptionsExitException(
+            "If --remote_output_service is specified, --remote_output_service_output_path_prefix must be set as well",
+            FailureDetails.RemoteOptions.Code.OUTPUT_SERVICE_WITHOUT_OUTPUT_PATH_REFIX);
+      }
+
+      ReferenceCountedChannel channel =
+          createChannel(
+              executorService,
+              remoteOptions,
+              authAndTlsOptions,
+              /* headersInterceptor= */ null,
+              loggingInterceptor,
+              channelFactory,
+              remoteOptions.remoteOutputService,
+              remoteOptions.remoteProxy,
+              maxConcurrencyPerConnection,
+              maxConnections,
+              verboseFailures,
+              env.getReporter(),
+              rsc,
+              digestUtil.getDigestFunction(),
+              ServerCapabilitiesRequirement.NONE);
+      GrpcRemoteOutputService grpcRemoteOutputService = new GrpcRemoteOutputService(
+          remoteOutputServiceStateAcrossBuilds,
+          channel,
+          outputBaseId,
+          PathFragment.create(outputPathPrefix),
+          remoteOptions.remoteInstanceName,
+          digestUtil,
+          retrier,
+          env);
+      remoteOutputService = grpcRemoteOutputService;
+      actionResultDownloader = grpcRemoteOutputService;
+    }
+
     if (enableRemoteExecution) {
       if (enableDiskCache) {
         try {
@@ -555,7 +610,8 @@ public final class RemoteModule extends BlazeModule {
               retryScheduler,
               digestUtil,
               logDir,
-              remoteOutputChecker);
+              remoteOutputChecker,
+              actionResultDownloader);
       repositoryRemoteExecutorFactoryDelegate.init(
           new RemoteRepositoryRemoteExecutorFactory(
               remoteCache,
@@ -584,7 +640,13 @@ public final class RemoteModule extends BlazeModule {
       RemoteCache remoteCache = new RemoteCache(cacheClient, remoteOptions, digestUtil);
       actionContextProvider =
           RemoteActionContextProvider.createForRemoteCaching(
-              executorService, env, remoteCache, retryScheduler, digestUtil, remoteOutputChecker);
+              executorService,
+              env,
+              remoteCache,
+              retryScheduler,
+              digestUtil,
+              remoteOutputChecker,
+              actionResultDownloader);
     }
 
     buildEventArtifactUploaderFactoryDelegate.init(
@@ -832,7 +894,6 @@ public final class RemoteModule extends BlazeModule {
     actionInputFetcher = null;
     remoteOptions = null;
     env = null;
-    remoteOutputService = null;
     tempPathGenerator = null;
     rpcLogFile = null;
     remoteOutputChecker = null;
@@ -865,6 +926,16 @@ public final class RemoteModule extends BlazeModule {
             ExitCode.LOCAL_ENVIRONMENTAL_ERROR,
             Code.RPC_LOG_FAILURE);
       }
+    }
+  }
+
+  @Override
+  public void commandComplete() {
+    if (remoteOutputService != null) {
+      if (remoteOutputService instanceof GrpcRemoteOutputService) {
+        ((GrpcRemoteOutputService) remoteOutputService).sendFinalizeBuild();
+      }
+      remoteOutputService = null;
     }
   }
 
@@ -934,12 +1005,17 @@ public final class RemoteModule extends BlazeModule {
     actionContextProvider.setTempPathGenerator(tempPathGenerator);
 
     CoreOptions coreOptions = env.getOptions().getOptions(CoreOptions.class);
+    RemoteOptions remoteOptions =
+        Preconditions.checkNotNull(
+            env.getOptions().getOptions(RemoteOptions.class), "RemoteOptions");
     OutputPermissions outputPermissions =
         coreOptions.experimentalWritableOutputs
             ? OutputPermissions.WRITABLE
             : OutputPermissions.READONLY;
 
-    if (actionContextProvider.getRemoteCache() != null) {
+    if (
+        remoteOptions.remoteOutputsMode != RemoteOutputsMode.ALL
+        && actionContextProvider.getRemoteCache() != null) {
       Preconditions.checkNotNull(remoteOutputChecker, "remoteOutputChecker must not be null");
 
       actionInputFetcher =
@@ -974,18 +1050,17 @@ public final class RemoteModule extends BlazeModule {
               env.getBlazeWorkspace().getPersistentActionCache(),
               leaseExtension);
 
-      remoteOutputService.setRemoteOutputChecker(remoteOutputChecker);
-      remoteOutputService.setActionInputFetcher(actionInputFetcher);
-      remoteOutputService.setLeaseService(leaseService);
-      remoteOutputService.setFileCacheSupplier(env::getFileCache);
+      ((RemoteOutputService) remoteOutputService).setRemoteOutputChecker(remoteOutputChecker);
+      ((RemoteOutputService) remoteOutputService).setActionInputFetcher(actionInputFetcher);
+      ((RemoteOutputService) remoteOutputService).setLeaseService(leaseService);
+      ((RemoteOutputService) remoteOutputService).setFileCacheSupplier(env::getFileCache);
       env.getEventBus().register(remoteOutputService);
     }
   }
 
   @Override
   public OutputService getOutputService() {
-    Preconditions.checkState(remoteOutputService == null, "remoteOutputService must be null");
-    if (actionContextProvider.getRemoteCache() != null) {
+    if (remoteOutputService == null && actionContextProvider.getRemoteCache() != null) {
       remoteOutputService = new RemoteOutputService(env);
     }
     return remoteOutputService;
