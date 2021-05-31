@@ -1147,7 +1147,8 @@ public class RemoteSpawnRunnerTest {
             executor,
             tempPathGenerator,
             /* captureCorruptedOutputsDir= */ null,
-            remoteOutputChecker);
+            remoteOutputChecker,
+            /*actionResultDownloader=*/ null);
     RemoteSpawnRunner runner =
         new RemoteSpawnRunner(
             execRoot,
@@ -1682,7 +1683,8 @@ public class RemoteSpawnRunnerTest {
                 executor,
                 tempPathGenerator,
                 /* captureCorruptedOutputsDir= */ null,
-                remoteOutputChecker));
+                remoteOutputChecker,
+                /*actionResultDownloader=*/ null));
 
     return new RemoteSpawnRunner(
         execRoot,
