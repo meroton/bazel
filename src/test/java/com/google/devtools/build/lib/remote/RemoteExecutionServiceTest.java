@@ -2466,7 +2466,8 @@ public class RemoteExecutionServiceTest {
         executor,
         tempPathGenerator,
         null,
-        remoteOutputChecker);
+        remoteOutputChecker,
+        /*actionResultDownloader=*/ null);
   }
 
   private RunfilesSupplier createRunfilesSupplier(String root, Collection<Artifact> artifacts) {
