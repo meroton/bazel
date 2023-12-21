@@ -44,6 +44,7 @@ import com.google.devtools.build.lib.remote.RemoteOutputServiceProto.InitialOutp
 import com.google.devtools.build.lib.remote.RemoteOutputServiceProto.StartBuildRequest;
 import com.google.devtools.build.lib.remote.RemoteOutputServiceProto.StartBuildResponse;
 import com.google.devtools.build.lib.remote.RemoteOutputServiceProto.StatResponse;
+import com.google.devtools.build.lib.remote.common.RemotePathResolver;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.util.AbruptExitException;
@@ -592,7 +593,8 @@ public class GrpcRemoteOutputService implements OutputService, ActionResultDownl
     // that they cannot disappear during the build.
   }
 
-  public ListenableFuture<Void> downloadActionResult(ActionResult actionResult) {
+  public ListenableFuture<Void> downloadActionResult(ActionResult actionResult, RemotePathResolver remotePathResolver) {
+    Path execRoot = env.getExecRoot();
     // Request that all outputs of the action are created. Do make sure
     // to remove the "bazel-out/" prefix from all paths, as that part of
     // the path is not managed by the remote output service.
@@ -605,18 +607,18 @@ public class GrpcRemoteOutputService implements OutputService, ActionResultDownl
       // TODO: Do we only want to do this selectively?
       builder.addFilesBuilder()
           .mergeFrom(file)
-          .setPath(fixupExecRootPath(PathFragment.create(file.getPath())))
+          .setPath(fixupExecRootPath(remotePathResolver.outputPathToLocalPath(file.getPath()).relativeTo(execRoot)))
           .setIsExecutable(true);
     }
     for (OutputDirectory directory : actionResult.getOutputDirectoriesList()) {
       builder.addDirectoriesBuilder()
           .mergeFrom(directory)
-          .setPath(fixupExecRootPath(PathFragment.create(directory.getPath())));
+          .setPath(fixupExecRootPath(remotePathResolver.outputPathToLocalPath(directory.getPath()).relativeTo(execRoot)));
     }
     for (OutputSymlink symlink : Iterables.concat(actionResult.getOutputFileSymlinksList(), actionResult.getOutputDirectorySymlinksList())) {
       builder.addSymlinksBuilder()
           .mergeFrom(symlink)
-          .setPath(fixupExecRootPath(PathFragment.create(symlink.getPath())));
+          .setPath(fixupExecRootPath(remotePathResolver.outputPathToLocalPath(symlink.getPath()).relativeTo(execRoot)));
     }
 
     return Futures.catchingAsync(

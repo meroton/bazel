@@ -1107,7 +1107,7 @@ public class RemoteExecutionService {
       // downloading for us.
       ActionResult actionResult = result.actionResult;
       List<ListenableFuture<Void>> downloads = new ArrayList<>();
-      downloads.add(actionResultDownloader.downloadActionResult(actionResult));
+      downloads.add(actionResultDownloader.downloadActionResult(actionResult, action.getRemotePathResolver()));
 
       FileOutErr outErr = action.getSpawnExecutionContext().getFileOutErr();
       FileOutErr tmpOutErr = outErr.childOutErr();
