@@ -398,7 +398,19 @@ public class GrpcRemoteOutputService implements OutputService, ActionResultDownl
                 }
                 FileStatus fileStatus = response.getFileStatus();
                 if (fileStatus.hasFile()) {
-                  Digest digest = fileStatus.getFile().getDigest();
+                  FileStatus.File regularFileStatus = fileStatus.getFile();
+                  if (!regularFileStatus.hasDigest()) {
+                    // The remote output service knows the file exists, but it
+                    // is incapable of returning the digest. This may be caused
+                    // by the kernel holding on to dirty pages in its write-back
+                    // cache.
+                    //
+                    // By returning null, ActionMetadataHandler's
+                    // fileArtifactValueFromArtifact() will compute the file's
+                    // digest separately.
+                    return null;
+                  }
+                  Digest digest = regularFileStatus.getDigest();
                   return new RegularFileStatus(digest.getSizeBytes(), DigestUtil.toBinaryDigest(digest));
                 }
                 if (fileStatus.hasDirectory()) {
@@ -558,6 +570,13 @@ public class GrpcRemoteOutputService implements OutputService, ActionResultDownl
       FileStatus fileStatus = response.getFileStatus();
       if (fileStatus.hasFile()) {
         FileStatus.File regularFileStatus = fileStatus.getFile();
+        if (!regularFileStatus.hasDigest()) {
+          // The remote output service knows the file exists, but it is
+          // incapable of returning the digest. This may be caused by
+          // the kernel holding on to dirty pages in its write-back
+          // cache. We must compute the digest ourselves.
+          return super.getFastDigest(path);
+        }
         return DigestUtil.toBinaryDigest(regularFileStatus.getDigest());
       }
       if (fileStatus.hasExternal()) {
