@@ -86,6 +86,7 @@ public class BazelOutputService implements OutputService {
   private final boolean verboseFailures;
   private final RemoteRetrier retrier;
   private final ReferenceCountedChannel channel;
+  @Nullable private final String lastBuildId;
 
   @Nullable private String buildId;
   @Nullable private PathFragment outputPathTarget;
@@ -100,7 +101,8 @@ public class BazelOutputService implements OutputService {
       String remoteOutputServiceOutputPathPrefix,
       boolean verboseFailures,
       RemoteRetrier retrier,
-      ReferenceCountedChannel channel) {
+      ReferenceCountedChannel channel,
+      @Nullable String lastBuildId) {
     this.outputBaseId = DigestUtil.hashCodeToString(md5().hashString(outputBase.toString(), UTF_8));
     this.execRootSupplier = execRootSupplier;
     this.outputPathSupplier = outputPathSupplier;
@@ -111,6 +113,7 @@ public class BazelOutputService implements OutputService {
     this.verboseFailures = verboseFailures;
     this.retrier = retrier;
     this.channel = channel;
+    this.lastBuildId = lastBuildId;
   }
 
   public void shutdown() {
@@ -244,7 +247,12 @@ public class BazelOutputService implements OutputService {
     outputPathTarget = constructOutputPathTarget(outputPathPrefix, response);
     prepareOutputPath(outputPath, outputPathTarget);
 
-    if (finalizeActions) {
+    if (finalizeActions && response.hasInitialOutputPathContents()) {
+      var initialOutputPathContents = response.getInitialOutputPathContents();
+      if (!initialOutputPathContents.getBuildId().equals(lastBuildId)) {
+        return ModifiedFileSet.EVERYTHING_DELETED;
+      }
+
       // TODO(chiwang): Handle StartBuildResponse.initial_output_path_contents
     }
 
