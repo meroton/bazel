@@ -118,6 +118,8 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
    * #cancel()} method must stop all such work.
    */
   private interface AsyncTask {
+    CountDownLatch getDoneSignal();
+    
     /** Returns a user-friendly description of the task. */
     String getDescription();
 
@@ -199,18 +201,38 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
 
   @Override
   public final void close() throws EvalException, IOException {
-    // Cancel all pending async tasks.
-    boolean hadPendingItems = cancelPendingAsyncTasks();
-    // Wait for all (cancelled) async tasks to complete before cleaning up the working directory.
-    // This is necessary because downloads may still be in progress and could end up writing to the
-    // working directory during deletion, which would cause an error.
-    executorService.close();
-    if (shouldDeleteWorkingDirectoryOnClose(wasSuccessful)) {
-      workingDirectory.deleteTree();
-    }
-    if (hadPendingItems && wasSuccessful) {
-      throw Starlark.errorf(
-          "Pending asynchronous work after %s finished execution", identifyingStringForLogging);
+    try (SilentCloseable c =
+        Profiler.instance().profile("StarlarkBaseExternalContext.close")) {
+      // Cancel all pending async tasks.
+      boolean hadPendingItems = cancelPendingAsyncTasks();
+      // Wait for all (cancelled) async tasks to complete before cleaning up the working directory.
+      // This is necessary because downloads may still be in progress and could end up writing to the
+      // working directory during deletion, which would cause an error.
+      try (SilentCloseable c2 =
+          Profiler.instance().profile("executorService.close")) {
+        executorService.close();
+      }
+      for (AsyncTask task : asyncTasks) {
+        if (task.getDoneSignal().getCount() != 0) {
+          try (SilentCloseable c2 =
+              Profiler.instance().profile("WAIT FOR " + task.getDescription())) {
+            task.getDoneSignal().wait();
+          } catch (InterruptedException e) {
+            // Graceful termination aborted, let the download continue on its own.
+            try (SilentCloseable c3 =
+                Profiler.instance().profile("InterruptedException")) {
+              Thread.currentThread().interrupt();
+            }
+          }
+        }
+      }
+      if (shouldDeleteWorkingDirectoryOnClose(wasSuccessful)) {
+        workingDirectory.deleteTree();
+      }
+      if (hadPendingItems && wasSuccessful) {
+        throw Starlark.errorf(
+            "Pending asynchronous work after %s finished execution", identifyingStringForLogging);
+      }
     }
   }
 
@@ -543,6 +565,11 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
     }
 
     @Override
+    public CountDownLatch getDoneSignal() {
+      return doneSignal;
+    }
+
+    @Override
     public String getDescription() {
       return String.format("downloading to '%s'", outputPath);
     }
@@ -555,6 +582,7 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
     @Override
     public boolean cancel() {
       boolean alreadyDone = !future.cancel(true);
+      /*
       if (doneSignal.getCount() != 0) {
         try (SilentCloseable c =
             Profiler.instance().profile("Cancelling download " + outputPath.toString())) {
@@ -564,6 +592,7 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
           Thread.currentThread().interrupt();
         }
       }
+      */
       return alreadyDone;
     }
 

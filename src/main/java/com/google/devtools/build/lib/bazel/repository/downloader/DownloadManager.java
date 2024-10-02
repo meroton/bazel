@@ -129,17 +129,19 @@ public class DownloadManager {
     return executorService.submit(
         () -> {
           try (SilentCloseable c = Profiler.instance().profile("fetching: " + context)) {
-            return downloadInExecutor(
-                originalUrls,
-                headers,
-                authHeaders,
-                checksum,
-                canonicalId,
-                type,
-                output,
-                eventHandler,
-                clientEnv,
-                context);
+            try (SilentCloseable c2 = Profiler.instance().profile("inner fetching")) {
+              return downloadInExecutor(
+                  originalUrls,
+                  headers,
+                  authHeaders,
+                  checksum,
+                  canonicalId,
+                  type,
+                  output,
+                  eventHandler,
+                  clientEnv,
+                  context);
+            }
           } finally {
             doneSignal.countDown();
           }
