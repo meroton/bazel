@@ -223,18 +223,27 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
       try (SilentCloseable c = Profiler.instance().profile("Before executorService.close")) {
       }
     }
+    String fullStackTraceBefore = Thread.getAllStackTraces()
+        .values()
+        .stream()
+        .map(Arrays::asList)
+        .map(list -> list.stream()
+            .map(i -> i.toString())
+            .collect(Collectors.joining("\n\t")))
+        .collect(Collectors.joining("\n"));
     executorService.close();
     if (!status.stream().allMatch(AtomicBoolean::get)) {
-      String fullStackTrace = Thread.getAllStackTraces()
-          .keySet()
+      String fullStackTraceAfter = Thread.getAllStackTraces()
+          .values()
           .stream()
-          .map(Thread::getStackTrace)
           .map(Arrays::asList)
           .map(list -> list.stream()
               .map(i -> i.toString())
               .collect(Collectors.joining("\n\t")))
           .collect(Collectors.joining("\n"));
-      try (SilentCloseable c = Profiler.instance().profile("After executorService.close " + fullStackTrace)) {
+      try (SilentCloseable c = Profiler.instance().profile("After executorService.close " + fullStackTraceBefore)) {
+      }
+      try (SilentCloseable c = Profiler.instance().profile("After executorService.close2 " + fullStackTraceAfter)) {
       }
     }
     if (shouldDeleteWorkingDirectoryOnClose(wasSuccessful)) {
