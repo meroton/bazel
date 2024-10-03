@@ -224,7 +224,7 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
     }
     executorService.close();
     if (!status.stream().allMatch(AtomicBoolean::get)) {
-      try (SilentCloseable c = Profiler.instance().profile("After executorService.close")) {
+      try (SilentCloseable c = Profiler.instance().profile("After executorService.close " + Thread.getAllStackTraces())) {
       }
     }
     if (shouldDeleteWorkingDirectoryOnClose(wasSuccessful)) {
