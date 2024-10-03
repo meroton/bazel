@@ -91,6 +91,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import net.starlark.java.annot.Param;
 import net.starlark.java.annot.ParamType;
@@ -224,7 +225,16 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
     }
     executorService.close();
     if (!status.stream().allMatch(AtomicBoolean::get)) {
-      try (SilentCloseable c = Profiler.instance().profile("After executorService.close " + Thread.getAllStackTraces())) {
+      String fullStackTrace = Thread.getAllStackTraces()
+          .keySet()
+          .stream()
+          .map(Thread::getStackTrace)
+          .map(Arrays::asList)
+          .map(list -> list.stream()
+              .map(i -> i.toString())
+              .collect(Collectors.joining("\n\t")))
+          .collect(Collectors.joining("\n"));
+      try (SilentCloseable c = Profiler.instance().profile("After executorService.close " + fullStackTrace)) {
       }
     }
     if (shouldDeleteWorkingDirectoryOnClose(wasSuccessful)) {
