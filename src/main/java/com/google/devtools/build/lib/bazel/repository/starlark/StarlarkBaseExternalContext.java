@@ -155,6 +155,7 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
   private final boolean allowWatchingPathsOutsideWorkspace;
   private final ExecutorService executorService;
   private final List<AtomicBoolean> status = new ArrayList<>();
+  private final List<String> startedDownloads = new ArrayList<>();
 
   private boolean wasSuccessful = false;
 
@@ -202,6 +203,14 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
   public final void close() throws EvalException, IOException {
     if (status.stream().allMatch(AtomicBoolean::get)) {
       try (SilentCloseable c = Profiler.instance().profile("Done before cancelPendingAsyncTasks")) {
+      }
+    }
+    try (SilentCloseable c = Profiler.instance().profile("asyncTasks " + asyncTasks.size() + " " + startedDownloads.size())) {
+      if (asyncTasks.size() != startedDownloads.size()) {
+        for (String id : startedDownloads) {
+          try (SilentCloseable c2 = Profiler.instance().profile("asyncTask " + id)) {
+          }
+        }
       }
     }
     // Cancel all pending async tasks.
@@ -785,6 +794,7 @@ When <code>sha256</code> or <code>integrity</code> is user specified, setting an
     if (download == null) {
       AtomicBoolean isDone = new AtomicBoolean();
       status.add(isDone);
+      startedDownloads.add(identifyingStringForLogging);
       Future<Path> downloadFuture =
           downloadManager.startDownload(
               executorService,
@@ -1015,6 +1025,7 @@ the same path on case-insensitive filesystems.
 
       AtomicBoolean isDone = new AtomicBoolean();
       status.add(isDone);
+      startedDownloads.add(identifyingStringForLogging);
       Future<Path> pendingDownload =
           downloadManager.startDownload(
               executorService,
