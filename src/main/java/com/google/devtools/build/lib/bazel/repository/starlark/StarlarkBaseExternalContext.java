@@ -200,14 +200,23 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
 
   @Override
   public final void close() throws EvalException, IOException {
+    if (status.stream().allMatch(AtomicBoolean::get)) {
+      try (SilentCloseable c = Profiler.instance().profile("Done before cancelPendingAsyncTasks")) {
+      }
+    }
     // Cancel all pending async tasks.
     boolean hadPendingItems = cancelPendingAsyncTasks();
     // Wait for all (cancelled) async tasks to complete before cleaning up the working directory.
     // This is necessary because downloads may still be in progress and could end up writing to the
     // working directory during deletion, which would cause an error.
+    if (!status.stream().allMatch(AtomicBoolean::get)) {
+      try (SilentCloseable c = Profiler.instance().profile("Before executorService.close")) {
+      }
+    }
     executorService.close();
     if (!status.stream().allMatch(AtomicBoolean::get)) {
-      throw new IllegalStateException("Not all downloads done after executor shutdown");
+      try (SilentCloseable c = Profiler.instance().profile("After executorService.close")) {
+      }
     }
     if (shouldDeleteWorkingDirectoryOnClose(wasSuccessful)) {
       workingDirectory.deleteTree();
