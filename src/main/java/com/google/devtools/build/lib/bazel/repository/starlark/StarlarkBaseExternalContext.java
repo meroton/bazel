@@ -90,6 +90,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nullable;
 import net.starlark.java.annot.Param;
 import net.starlark.java.annot.ParamType;
@@ -153,6 +154,7 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
   private final List<AsyncTask> asyncTasks;
   private final boolean allowWatchingPathsOutsideWorkspace;
   private final ExecutorService executorService;
+  private final List<AtomicBoolean> status = new ArrayList<>();
 
   private boolean wasSuccessful = false;
 
@@ -204,6 +206,9 @@ public abstract class StarlarkBaseExternalContext implements AutoCloseable, Star
     // This is necessary because downloads may still be in progress and could end up writing to the
     // working directory during deletion, which would cause an error.
     executorService.close();
+    if (!status.stream().allMatch(AtomicBoolean::get)) {
+      throw new IllegalStateException("Not all downloads done after executor shutdown");
+    }
     if (shouldDeleteWorkingDirectoryOnClose(wasSuccessful)) {
       workingDirectory.deleteTree();
     }
@@ -769,6 +774,8 @@ When <code>sha256</code> or <code>integrity</code> is user specified, setting an
               thread.getCallerLocation());
     }
     if (download == null) {
+      AtomicBoolean isDone = new AtomicBoolean();
+      status.add(isDone);
       Future<Path> downloadFuture =
           downloadManager.startDownload(
               executorService,
@@ -781,7 +788,8 @@ When <code>sha256</code> or <code>integrity</code> is user specified, setting an
               outputPath.getPath(),
               env.getListener(),
               envVariables,
-              identifyingStringForLogging);
+              identifyingStringForLogging,
+              isDone);
       download =
           new PendingDownload(
               executable,
@@ -996,6 +1004,8 @@ the same path on case-insensitive filesystems.
       downloadDirectory =
           workingDirectory.getFileSystem().getPath(tempDirectory.toFile().getAbsolutePath());
 
+      AtomicBoolean isDone = new AtomicBoolean();
+      status.add(isDone);
       Future<Path> pendingDownload =
           downloadManager.startDownload(
               executorService,
@@ -1008,7 +1018,8 @@ the same path on case-insensitive filesystems.
               downloadDirectory,
               env.getListener(),
               envVariables,
-              identifyingStringForLogging);
+              identifyingStringForLogging,
+              isDone);
       // Ensure that the download is cancelled if the repo rule is restarted as it runs in its own
       // executor.
       PendingDownload pendingTask =
